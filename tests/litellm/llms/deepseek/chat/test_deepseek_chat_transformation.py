@@ -35,6 +35,20 @@ class TestDeepSeekThinkingParams:
 
         assert result["thinking"] == {"type": "enabled"}
 
+    def test_map_thinking_disabled(self):
+        """Test that thinking={"type": "disabled"} is passed through correctly."""
+        non_default_params = {"thinking": {"type": "disabled"}}
+        optional_params = {}
+
+        result = self.config.map_openai_params(
+            non_default_params=non_default_params,
+            optional_params=optional_params,
+            model=self.model,
+            drop_params=False,
+        )
+
+        assert result["thinking"] == {"type": "disabled"}
+
     def test_map_thinking_with_budget_tokens_strips_budget(self):
         """Test that budget_tokens is stripped from thinking param (DeepSeek doesn't support it)."""
         non_default_params = {"thinking": {"type": "enabled", "budget_tokens": 2048}}
@@ -93,8 +107,8 @@ class TestDeepSeekThinkingParams:
 
         assert result["thinking"] == {"type": "enabled"}
 
-    def test_map_reasoning_effort_none_does_not_enable_thinking(self):
-        """Test that reasoning_effort='none' does not enable thinking."""
+    def test_map_reasoning_effort_none_maps_to_disabled(self):
+        """Test that reasoning_effort='none' maps to thinking disabled."""
         non_default_params = {"reasoning_effort": "none"}
         optional_params = {}
 
@@ -105,7 +119,7 @@ class TestDeepSeekThinkingParams:
             drop_params=False,
         )
 
-        assert "thinking" not in result
+        assert result["thinking"] == {"type": "disabled"}
 
     def test_map_reasoning_effort_null_does_not_enable_thinking(self):
         """Test that reasoning_effort=None does not enable thinking."""
