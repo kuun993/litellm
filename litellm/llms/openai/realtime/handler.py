@@ -21,6 +21,16 @@ from ....llms.custom_httpx.http_handler import get_shared_realtime_ssl_context
 from ..openai import OpenAIChatCompletion
 
 
+def _handshake_rejection_status_code(error: BaseException) -> int:
+    """HTTP status a backend rejected a realtime WebSocket handshake with.
+
+    ``websockets`` >= 15 raises ``InvalidStatus``, which exposes the code on
+    ``response.status_code``; the legacy ``InvalidStatusCode`` exposes it directly.
+    """
+    response_status: Final = getattr(getattr(error, "response", None), "status_code", None)
+    return int(getattr(error, "status_code", None) or response_status or 1011)
+
+
 class OpenAIRealtime(OpenAIChatCompletion):
     """
     Base handler for OpenAI-compatible realtime WebSocket connections.
@@ -105,6 +115,29 @@ class OpenAIRealtime(OpenAIChatCompletion):
         """
         return None
 
+    def _backend_uses_beta_protocol(self) -> bool | None:
+        """Whether the upstream speaks the OpenAI beta realtime protocol.
+
+        ``None`` infers it from the client's ``OpenAI-Beta`` header, which is correct for
+        OpenAI itself because that header is forwarded upstream. Providers whose backend
+        always speaks beta override this with ``True``, otherwise ``RealTimeStreaming``
+        remaps the client's flat ``session.update`` into GA's nested shape and the
+        backend silently drops the fields it does not know.
+        """
+        return None
+
+    def _handshake_status_errors(self) -> tuple[type[BaseException], ...]:
+        """Exception classes a rejected backend handshake raises.
+
+        Kept as the legacy name to preserve existing behavior for every provider on this
+        base class. Subclasses whose backend raises the class ``websockets`` >= 15 actually
+        uses override this, so a rejected handshake closes the client with the upstream
+        status instead of falling through to the generic 1011 handler.
+        """
+        import websockets
+
+        return (websockets.exceptions.InvalidStatusCode,)
+
     async def async_realtime(
         self,
         model: str,
@@ -172,11 +205,12 @@ class OpenAIRealtime(OpenAIChatCompletion):
                         model if (query_params or {}).get("intent") == "transcription" else None
                     ),
                     event_normalizer=self._make_event_normalizer(),
+                    backend_uses_beta_protocol=self._backend_uses_beta_protocol(),
                 )
                 await realtime_streaming.bidirectional_forward()
 
-        except websockets.exceptions.InvalidStatusCode as e:
-            await websocket.close(code=e.status_code, reason=_redact_string(str(e)))
+        except self._handshake_status_errors() as e:
+            await websocket.close(code=_handshake_rejection_status_code(e), reason=_redact_string(str(e)))
         except Exception as e:
             try:
                 await websocket.close(code=1011, reason=_redact_string(f"Internal server error: {e}"))
